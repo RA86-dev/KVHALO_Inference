@@ -105,16 +105,11 @@ class KvHALO_Upscaler(nn.Module):
         self.compiled = compiled
         self.teacher_dim = config.get("teacher_dim", 4096)
         
-        # Ingests the concatenated, quantized 2-bit Keys and Values
-        # Shape goes from (4096 * 2) -> 768 bottleneck
         self.input_compression = nn.Linear(self.teacher_dim * 2, config["d_model"], bias=False)
         self.inner_model = HRMInner(config)
         
-        # HARDCODED COMPUTE LIFECYCLE (t_steps = 2)
         self.t_steps = 2
         
-        # CONTINUOUS REGRESSION HEAD: Outputs continuous f32 vectors matching Teacher KV
-        # Shape blows back up from 768 -> (4096 * 2)
         self.regression_head = nn.Linear(config["d_model"], self.teacher_dim * 2, bias=False)
 
     def forward(self, lossy_kv_states, target_states=None, start_pos=0) -> Dict[str, torch.Tensor]:
@@ -165,5 +160,5 @@ class KvHALO_Upscaler(nn.Module):
         if not self.compiled:
             torch.compile(self)
             self.compiled = True
-            print("🍬 ProjectCandyKVNet compiled successfully.")
+            print("🍬 ProjectKVHALOKVNet compiled successfully.")
         return self

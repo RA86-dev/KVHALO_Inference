@@ -21,7 +21,7 @@ import gradio as gr
 import numpy as np
 from threading import Thread
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
-from project_candy_model import ProjectCandyKVNet
+from examples.HRM_Main import KvHALO_Upscaler
 
 # Attempt standard matplotlib import for live visualization
 try:
@@ -34,15 +34,19 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-# # Check for Apple Silicon / Metal Performance Shaders
-# if torch.backends.mps.is_available():
-#     device = torch.device("mps")
-#     torch_dtype = torch.float16
-#     print("🍏 UI Engine mounted onto Metal Performance Shaders (MPS).")
-# else:
-#     device = torch.device("cpu")
-#     torch_dtype = torch.float32
-#     print("💻 UI Engine mounted onto CPU.")
+# Identify correct version
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    torch_dtype = torch.float16
+    print("Found NVIDIA GPU!")
+elif torch.mps.is_available():
+    device = torch.device("mps")
+    torch_dtype = torch.float16
+    print("Found MacBook Performance Shaders!")
+else:
+    device = torch.device("cpu")
+    torch_dtype = torch.float32
+    print("Couldn't find any hardware accelerators! Using CPU.")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Configuration matching your 92M training run
 CONFIG = {
@@ -75,17 +79,17 @@ print("🚚 Transferring Mistral-7B layers to Apple Silicon GPU (MPS)...")
 teacher = teacher.to(device)
 print("✅ Mistral-7B successfully loaded in Unified Memory!")
 
-print("🍬 Mounting Project Candy KV Network...")
-candy = ProjectCandyKVNet(CONFIG).to(device=device, dtype=torch_dtype)
-if os.path.exists("best_candy.pt"):
-    checkpoint_data = torch.load("best_candy.pt", map_location=device)
+print("🍬 Mounting Project KVHALO KV Network...")
+KVHALO = KvHALO_Upscaler(CONFIG).to(device=device, dtype=torch_dtype)
+if os.path.exists("best_KVHALO.pt"):
+    checkpoint_data = torch.load("best_KVHALO.pt", map_location=device)
     state_dict = checkpoint_data["model_state_dict"] if isinstance(checkpoint_data,
                                                                    dict) and "model_state_dict" in checkpoint_data else checkpoint_data
-    candy.load_state_dict(state_dict)
-    candy.eval()
+    KVHALO.load_state_dict(state_dict)
+    KVHALO.eval()
     print("👑 Golden weights successfully secured inside the UI engine!")
 else:
-    print("⚠️ WARNING: 'best_candy.pt' not found. Running UI with uninitialized weights.")
+    print("⚠️ WARNING: 'best_KVHALO.pt' not found. Running UI with uninitialized weights.")
 
 # =====================================================================
 # SILENT WARM-UP ROUTINE TO PRIM THE HARDWARE CACHES
@@ -214,7 +218,7 @@ def process_comparison(prompt, max_tokens, bits, temperature, top_p):
     # =====================================================================
     # STREAM 1: RUNNING BASELINE (DISABLED)
     # =====================================================================
-    print(f"\n⏳ [Run 1/2] Streaming Baseline (Pure {bits}-Bit Quantization - Candy Disabled)...")
+    print(f"\n⏳ [Run 1/2] Streaming Baseline (Pure {bits}-Bit Quantization - KVHALO Disabled)...")
 
     def decompress_kv_disabled(raw_keys, raw_values, start_pos=0):
         with torch.no_grad():
@@ -280,7 +284,7 @@ def process_comparison(prompt, max_tokens, bits, temperature, top_p):
     # =====================================================================
     # STREAM 2: RUNNING ACTIVE SYSTEM (ENABLED)
     # =====================================================================
-    print(f"\n⏳ [Run 2/2] Streaming KVHALO Manifold Recovery (Candy Enabled at {bits}-Bit)...")
+    print(f"\n⏳ [Run 2/2] Streaming KVHALO Manifold Recovery (KVHALO Enabled at {bits}-Bit)...")
 
     def decompress_kv_enabled(raw_keys, raw_values, start_pos=0):
         global waveform_data
@@ -293,10 +297,10 @@ def process_comparison(prompt, max_tokens, bits, temperature, top_p):
             lossy_keys = simulate_quantization(true_keys, bits=bits)
             lossy_values = simulate_quantization(true_values, bits=bits)
 
-            # Upscale utilizing Candy HRM Backbone
+            # Upscale utilizing KVHALO HRM Backbone
             lossy_kv_concat = torch.cat([lossy_keys, lossy_values], dim=-1).to(dtype=torch_dtype)
-            candy_output = candy(lossy_kv_concat, start_pos=start_pos)
-            upscaled_kv = candy_output["predicted_states"]
+            KVHALO_output = KVHALO(lossy_kv_concat, start_pos=start_pos)
+            upscaled_kv = KVHALO_output["predicted_states"]
             pred_keys, pred_values = upscaled_kv.chunk(2, dim=-1)
 
             # Retain cache slice for final plotting metrics
@@ -390,7 +394,7 @@ def process_comparison(prompt, max_tokens, bits, temperature, top_p):
 # THE GRADIO INTERFACE
 # =====================================================================
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 🍬 Project Candy: Real-Time KV-Cache Decompressorate Monitor")
+    gr.Markdown("# 🍬 Project KVHALO: Real-Time KV-Cache Decompressorate Monitor")
     gr.Markdown(
         "### Comparative Analysis: Static Attenuated Space vs. Implicit Neural Manifold Recovery (KVHALO) | Apache 2.0")
 
@@ -412,9 +416,9 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             submit_btn = gr.Button("⚡ Run Comparative Execution", variant="primary")
 
     with gr.Row():
-        # LEFT WINDOW: SYSTEM WITHOUT CANDY RECONSTRUCTION
+        # LEFT WINDOW: SYSTEM WITHOUT KVHALO RECONSTRUCTION
         with gr.Column():
-            gr.Markdown("### 🚫 Baseline: Candy Decompressor [ DISABLED ]")
+            gr.Markdown("### 🚫 Baseline: KVHALO Decompressor [ DISABLED ]")
             gr.Markdown(
                 "*Mistral Layer 15 cache is crushed to lossy low-bit tensors and forced directly into self-attention.*")
             out_disabled_text = gr.TextArea(label="Output Response Text", lines=8, interactive=False)
