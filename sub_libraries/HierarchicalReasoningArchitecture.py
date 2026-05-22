@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, Dict
+
+# --- RETAINING YOUR EXACT ROPE, RMSNORM, & SWIGLU ARCHITECTURE ---
+
 class RotaryPositionalEmbeddings(nn.Module):
     def __init__(self, d_head, block_size=8192, base=10000):
         super().__init__()
@@ -97,20 +100,30 @@ class HRMInner(nn.Module):
 
 # ---------------------------------------------------------
 # THE KV UPSCALER BACKBONE (SUPER-RESOLUTION REGRESSOR)
-# ---------------------------------------------------------
+# ---------------------------------------------------------``
 class KvHALO_Upscaler(nn.Module):
     def __init__(self, config, compiled=False):
         super().__init__()
         self.config = config
         self.compiled = compiled
-        self.teacher_dim = config.get("teacher_dim", 4096)
+        self.teacher_dim = config.get("teacher_dim", 1024)
+        self.t_steps = config.get("t_steps", 2)
         
-        self.input_compression = nn.Linear(self.teacher_dim * 2, config["d_model"], bias=False)
-        self.inner_model = HRMInner(config)
+        # =======================================================
+        # STREAM 1: GEOMETRIC KEY SPECIALIST (Tracks RoPE Phases)
+        # =======================================================
+        # Ingests ONLY the 1024-dim Keys -> Bottleneck -> 1024-dim Continuous Keys
+        self.key_compression = nn.Linear(self.teacher_dim, config["d_model"], bias=False)
+        self.key_inner_model = HRMInner(config)
+        self.key_regression_head = nn.Linear(config["d_model"], self.teacher_dim, bias=False)
         
-        self.t_steps = 2
-        
-        self.regression_head = nn.Linear(config["d_model"], self.teacher_dim * 2, bias=False)
+        # =======================================================
+        # STREAM 2: SEMANTIC VALUE SPECIALIST (Tracks Embeddings)
+        # =======================================================
+        # Ingests ONLY the 1024-dim Values -> Bottleneck -> 1024-dim Continuous Values
+        self.value_compression = nn.Linear(self.teacher_dim, config["d_model"], bias=False)
+        self.value_inner_model = HRMInner(config)
+        self.value_regression_head = nn.Linear(config["d_model"], self.teacher_dim, bias=False)
 
     def forward(self, lossy_kv_states, target_states=None, start_pos=0) -> Dict[str, torch.Tensor]:
         """
@@ -119,37 +132,53 @@ class KvHALO_Upscaler(nn.Module):
         """
         batch_size, seq_len, _ = lossy_kv_states.shape
 
-        # Step 0: Compress lossy KV cache down to candidate latent space
-        z_L = self.input_compression(lossy_kv_states)
-        z_H = torch.zeros_like(z_L)
+        # Chunk the incoming concatenated tensor back into independent Key and Value streams
+        lossy_keys, lossy_values = lossy_kv_states.chunk(2, dim=-1)
 
-        # STEP 1: Execute exactly 2 thinking loops through the dual-stream HRM architecture
+        # ---------------------------------------------------------
+        # PATH A: EXECUTE KEY SPECIALIST
+        # ---------------------------------------------------------
+        z_L_k = self.key_compression(lossy_keys)
+        z_H_k = torch.zeros_like(z_L_k)
+        
         for step in range(self.t_steps):
-            z_H, z_L = self.inner_model(z_H, z_L, start_pos=start_pos)
+            z_H_k, z_L_k = self.key_inner_model(z_H_k, z_L_k, start_pos=start_pos)
+            
+        # RESIDUAL CLAMP: Multiply by 0.1 to prevent magnitude explosion (Saves the MSE)
+        pred_keys = lossy_keys + (self.key_regression_head(z_H_k) * 0.1)
+
+        # ---------------------------------------------------------
+        # PATH B: EXECUTE VALUE SPECIALIST
+        # ---------------------------------------------------------
+        z_L_v = self.value_compression(lossy_values)
+        z_H_v = torch.zeros_like(z_L_v)
         
-        # STEP 2: Project final latent state into the continuous teacher dimension
-        # Shape: [batch_size, seq_len, teacher_dim * 2]
-        predicted_f32_states = self.regression_head(z_H)
-        
+        for step in range(self.t_steps):
+            z_H_v, z_L_v = self.value_inner_model(z_H_v, z_L_v, start_pos=start_pos)
+            
+        # ULTRA-TIGHT CLAMP: Values are static semantics, they need almost no scaling (0.02)
+        pred_values = lossy_values + (self.value_regression_head(z_H_v) * 0.02)
+
+        # ---------------------------------------------------------
+        # RECOMBINE & LOSS ENGINE
+        # ---------------------------------------------------------
+        # Shape blows back up to [batch_size, seq_len, teacher_dim * 2]
+        predicted_f32_states = torch.cat([pred_keys, pred_values], dim=-1)
         output = {"predicted_states": predicted_f32_states}
 
-        # STEP 3: Continuous Latent Distillation Loss Engine
         if target_states is not None:
-            # FORCE TARGET STATES TO FLOAT32 TO PREVENT RUNTIME ERROR
             target_states_f32 = target_states.to(dtype=torch.float32)
             
-            # A. Mean Squared Error (Geometric magnitude alignment)
+            # MSE (Geometric magnitude alignment)
             mse_loss = F.mse_loss(predicted_f32_states, target_states_f32)
             
-            # B. Cosine Distance Loss (Directional semantic alignment)
-            # We flatten everything to directly compare the pointing angles of the KV vectors
+            # Cosine Distance Loss (Directional semantic alignment)
             flat_pred = predicted_f32_states.view(-1, self.teacher_dim * 2)
             flat_target = target_states_f32.view(-1, self.teacher_dim * 2)
             
             cosine_sim = F.cosine_similarity(flat_pred, flat_target, dim=-1)
             cosine_loss = 1.0 - cosine_sim.mean()
             
-            # Balanced loss combination
             output["loss"] = mse_loss + cosine_loss
             output["mse_loss"] = mse_loss
             output["cosine_similarity"] = cosine_sim.mean()
@@ -160,5 +189,5 @@ class KvHALO_Upscaler(nn.Module):
         if not self.compiled:
             torch.compile(self)
             self.compiled = True
-            print("🍬 ProjectKVHALOKVNet compiled successfully.")
+            print("🍬 Decoupled ProjectCandyKVNet compiled successfully.")
         return self
