@@ -7,29 +7,6 @@
 
 ---
 
-## 📋 Table of Contents
-
-* [Overview](https://www.google.com/search?q=%23overview)
-* [Architecture](https://www.google.com/search?q=%23architecture)
-* [Hierarchical Reasoning Model (HRM)](https://www.google.com/search?q=%23hierarchical-reasoning-model-hrm)
-* [KV Upscaler Backbone](https://www.google.com/search?q=%23kv-upscaler-backbone)
-* [Quantization & Reconstruction Pipeline](https://www.google.com/search?q=%23quantization--reconstruction-pipeline)
-
-
-* [Project Structure](https://www.google.com/search?q=%23project-structure)
-* [Installation](https://www.google.com/search?q=%23installation)
-* [Usage](https://www.google.com/search?q=%23usage)
-* [Quick Start](https://www.google.com/search?q=%23quick-start)
-* [Programmatic API](https://www.google.com/search?q=%23programmatic-api)
-
-
-* [Configuration](https://www.google.com/search?q=%23configuration)
-* [Training](https://www.google.com/search?q=%23training)
-* [Performance Metrics](https://www.google.com/search?q=%23performance-metrics)
-* [Technical Details](https://www.google.com/search?q=%23technical-details)
-* [License](https://www.google.com/search?q=%23license)
-
----
 
 ## Overview
 
@@ -326,7 +303,7 @@ $$\text{VRAM Savings} \approx \text{Footprint}_{\text{FP16}} - \text{Footprint}_
 
 | Metric | Value |
 | --- | --- |
-| **Total Parameters** | ~92M |
+| **Total Parameters** | ~46M |
 | **Thinking Iterations ($t_{\text{steps}}$)** | 2 Loops |
 | **State Layout** | Dual-Stream ($z_H$ Global + $z_L$ Residual) |
 | **Attention Engine** | Multi-Head Attention via FlashAttention-2 |
