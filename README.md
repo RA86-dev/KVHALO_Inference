@@ -174,8 +174,7 @@ KVHALO-Inference/
 
 | File | Purpose |
 |------|---------|
-| `ExecutionClient.py` | `MistralKvHALO` class — production API for integrating KVHALO into any generation pipeline |
-| `sub_libraries/HRM_Main.py` | Core HRM architecture: `HRMBlock`, `HRMInner`, `KvHALO_Upscaler`, `RMSNorm`, `RotaryPositionalEmbeddings` |
+| `main.py` | `MistralKvHALO` class — production API for integrating KVHALO into any generation pipeline |
 | `sub_libraries/HRM_Simulated_Quantization.py` | `simulate_low_bit_quantization()` utility for training-time quantization simulation |
 | `examples/compare_base_mistral.py` | Full Gradio application comparing baseline vs. KVHALO-enhanced generation with live waveform visualization |
 
