@@ -193,20 +193,18 @@ KVHALO-Inference/
 
 ```bash
 # Install Python dependencies
+git clone https://github.com/RA86-dev/KVHALO_Inference && cd KVHALO_Inference
 pip install -r requirements.txt
-```
-
-### Required Dependencies
-- Note that all models are available at the Huggingface Repository [Here](https://huggingface.co/richyvd/kvhalo).
-- **Please Download the v2.3 or any model on the repository for upscaling purposes**.
+huggingface-cli download richyvd/kvhalo # Downloads v2.1 and v2.3 - choose one
+``` 
 ---
 
 ## Usage
-
+This is recommended to be downloaded in the directory that you are working in, so that you can just import files using `from` and `import`.
 ### Quick Start
 
 ```python
-from ExecutionClient import MistralKvHALO
+from KVHALO_Inference.main import MistralKvHALO
 
 # Initialize the KVHALO engine
 client = MistralKvHALO(target_layer=15)
@@ -220,28 +218,13 @@ for chunk in client.generate(prompt, max_new_tokens=64, bits=2, temperature=0.7)
     print(chunk, end="", flush=True)
 ```
 
-### Interactive Comparison Demo
-
-Launch the Gradio application to compare baseline generation (without KVHALO) against KVHALO-enhanced generation in real-time:
-
-```bash
-cd examples
-python compare_base_mistral.py
-```
-
-The demo provides:
-
-- **Side-by-side text output** comparing baseline vs. KVHALO-enhanced responses
-- **Live waveform visualization** showing the KV cache manifold at each stage (original, quantized, reconstructed)
-- **Real-time telemetry** including throughput speed, generation time, VRAM savings, and reconstruction fidelity metrics
-- **Configurable parameters**: quantization bit-width (1-4 bits), max tokens, temperature, and top-p
 
 ### Programmatic API
 
 The `MistralKvHALO` class provides a clean interface:
 
 ```python
-from ExecutionClient import MistralKvHALO
+from KVHALO_Inference.main import MistralKvHALO
 
 client = MistralKvHALO(
     model_id="mistralai/Mistral-7B-Instruct-v0.3",  # Base model
