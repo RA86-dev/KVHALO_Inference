@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Dict, Any, Generator
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 from threading import Thread
-from sub_libraries.HierarchicalReasoningArchitecture import KvHALO_Upscaler
+from KVHALO_Inference.sub_libraries.HierarchicalReasoningArchitecture import KvHALO_Upscaler
 
 class MistralKvHALO:
     """
