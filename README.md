@@ -153,7 +153,6 @@ The `KvHALO_Upscaler` manages the end-to-end reconstruction pipeline:
 
 KVHALO provides uniform, configurable bit-width simulation mapping to $\text{Steps} = 2^{\text{bits}} - 1$:
 
-* **1-bit:** 2 levels $[0, 1]$ $\rightarrow$ 50% foot-print compression
 * **2-bit:** 4 levels $[0, \frac{1}{3}, \frac{2}{3}, 1]$ $\rightarrow$ 8x spatial VRAM reduction
 * **4-bit:** 15 levels $[0, \frac{1}{14}, \dots, 1]$ $\rightarrow$ 4x spatial VRAM reduction
 
@@ -349,8 +348,8 @@ $$\text{VRAM Savings} \approx \text{Footprint}_{\text{FP16}} - \text{Footprint}_
 
 ---
 
-## License
-
+## License and Paper
+The paper is [located here](https://doi.org/10.5281/zenodo.20361517)
 This framework is open-source software distributed under the terms of the **Apache License 2.0**.
 
 ```text
