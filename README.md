@@ -1,41 +1,48 @@
+
 # KVHALO-Inference
 
-**KVHALO** (KV Cache Hierarchical Adaptive Learning Optimizer) is a novel inference-time framework that dynamically reconstructs degraded KV caches in autoregressive transformer models. By intercepting key-value cache tensors during generation, KVHALO applies super-resolution regression through a **Hierarchical Reasoning Model (HRM)** architecture to recover high-fidelity representations from severely quantized low-bit footprints.
+**KVHALO** (KV Cache Hierarchical Adaptive Learning Optimizer) is a novel inference-time framework that dynamically reconstructs degraded KV caches in autoregressive transformer models. By intercepting key-value cache tensors during generation, KVHALO applies super-resolution regression through a **Hierarchical Reasoning Model (HRM)** architecture to recover high-fidelity representations from severely quantized, low-bit footprints.
 
-**NOTE**: This repository is only for Mistral. If you would like to implement a different model, you will need to modify the code.
+> ⚠️ **NOTE**: This implementation is currently optimized for **Mistral** architectures. Adapting it to other models requires minor modifications to the layer interception hooks.
+
+---
 
 ## 📋 Table of Contents
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-  - [Hierarchical Reasoning Model (HRM)](#hierarchical-reasoning-model-hrm)
-  - [KV Upscaler Backbone](#kv-upscaler-backbone)
-  - [Quantization & Reconstruction Pipeline](#quantization--reconstruction-pipeline)
-- [Project Structure](#project-structure)
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Quick Start](#quick-start)
-  - [Interactive Comparison Demo](#interactive-comparison-demo)
-  - [Programmatic API](#programmatic-api)
-- [Configuration](#configuration)
-- [Training](#training)
-- [Performance Metrics](#performance-metrics)
-- [License](#license)
+* [Overview](https://www.google.com/search?q=%23overview)
+* [Architecture](https://www.google.com/search?q=%23architecture)
+* [Hierarchical Reasoning Model (HRM)](https://www.google.com/search?q=%23hierarchical-reasoning-model-hrm)
+* [KV Upscaler Backbone](https://www.google.com/search?q=%23kv-upscaler-backbone)
+* [Quantization & Reconstruction Pipeline](https://www.google.com/search?q=%23quantization--reconstruction-pipeline)
+
+
+* [Project Structure](https://www.google.com/search?q=%23project-structure)
+* [Installation](https://www.google.com/search?q=%23installation)
+* [Usage](https://www.google.com/search?q=%23usage)
+* [Quick Start](https://www.google.com/search?q=%23quick-start)
+* [Programmatic API](https://www.google.com/search?q=%23programmatic-api)
+
+
+* [Configuration](https://www.google.com/search?q=%23configuration)
+* [Training](https://www.google.com/search?q=%23training)
+* [Performance Metrics](https://www.google.com/search?q=%23performance-metrics)
+* [Technical Details](https://www.google.com/search?q=%23technical-details)
+* [License](https://www.google.com/search?q=%23license)
 
 ---
 
 ## Overview
 
-KV caches are critical to the performance of autoregressive language models, storing past token representations for efficient attention computation. However, storing full 16-bit floating-point KV caches consumes significant memory, especially for long sequences. Traditional approaches compress these caches through quantization, but aggressive low-bit quantization (e.g., 2-bit) degrades model output quality.
+KV caches are critical to the performance of autoregressive language models, storing past token representations for efficient attention computation. However, storing full 16-bit floating-point (FP16) KV caches consumes significant memory, especially during long-context generation. Traditional approaches compress these caches through quantization, but aggressive low-bit quantization (e.g., 2-bit) severely degrades model output quality.
 
-**KVHALO solves this problem** by:
+**KVHALO solves this bottleneck** by executing a four-step pipeline:
 
-1. **Intercepting** KV cache tensors at specified transformer layers during inference
-2. **Compressing** them to low-bit representations (simulating extreme quantization)
-3. **Dynamically reconstructing** them back to high-fidelity 16-bit tensors using the HRM neural network
-4. **Injecting** the reconstructed caches back into the model's attention mechanism
+1. **Intercepting:** Catches KV cache tensors at specified transformer layers during inference.
+2. **Compressing:** Simulates extreme, low-bit quantization configurations.
+3. **Reconstructing:** Dynamically upscales the low-bit footprints back to high-fidelity 16-bit tensors using the HRM architecture.
+4. **Injecting:** Feeds the reconstructed high-fidelity caches back into the model's attention mechanism natively.
 
-This enables **memory-efficient inference** without sacrificing generation quality — achieving up to **8x VRAM reduction** on targeted layers while maintaining output fidelity.
+This enables **memory-efficient inference** without sacrificing generation quality—achieving up to an **8x VRAM reduction** on targeted layers while maintaining baseline output fidelity.
 
 ---
 
@@ -43,117 +50,114 @@ This enables **memory-efficient inference** without sacrificing generation quali
 
 ### Hierarchical Reasoning Model (HRM)
 
-The HRM is the core neural architecture that performs the KV cache reconstruction. It consists of two interwoven computational streams:
+The HRM is the core neural architecture performing the KV cache reconstruction. It utilizes two interwoven computational streams to capture macro- and micro-level context features.
 
 #### Dual-Stream Design
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    HRMInner Module                          │
+│                   HRMInner Module                           │
 │                                                             │
-│  z_H (High-State) ──→ HRMBlock ──→ z_H_new                │
+│  z_H (High-State) ──→ HRMBlock ──→ z_H_new                  │
 │       ↑                        ↑                            │
 │       │                        │                            │
-│  z_L (Low-State) ──→ HRMBlock ──→ z_L_current             │
-│       ↑                       │                             │
-│       └── Cross-Stream Routing ─┘                           │
+│  z_L (Low-State)  ──→ HRMBlock ──→ z_L_current              │
+│       ↑                        │                            │
+│       └── Cross-Stream Routing ─┘                            │
 └─────────────────────────────────────────────────────────────┘
+
 ```
 
-The HRMInner module maintains two parallel state representations:
+The `HRMInner` module maintains two parallel state representations:
 
-- **High-State (z_H)**: Captures coarse-grained, global dependencies in the KV cache
-- **Low-State (z_L)**: Captures fine-grained, local patterns and residual information
+* **High-State ($z_H$):** Captures coarse-grained, global dependencies in the KV cache.
+* **Low-State ($z_L$):** Captures fine-grained, local patterns and residual information.
 
-These states interact through **Dual-Stream Information Routing**:
+These states interact dynamically through **Dual-Stream Information Routing**:
 
 ```python
 z_L_input = RMSNorm(z_L + z_H)          # Fuse high-state into low-state
 z_L_current = L_module(z_L_input)        # Process through low-stream
 z_H_input = z_H + z_L_current            # Feed back low-state to high-stream
 z_H_new = H_module(z_H_input)            # Process through high-stream
+
 ```
 
 #### HRMBlock Components
 
-Each HRMBlock contains:
+Each `HRMBlock` utilizes highly optimized, modern architectural components:
 
 | Component | Description |
-|-----------|-------------|
-| **RMSNorm** | Root Mean Square Layer Normalization for stable training |
-| **Q/K/V/O Projections** | Multi-head attention with learned linear transformations |
-| **Rotary Positional Embeddings** | Sinusoidal RoPE for position-aware attention computation |
-| **SwiGLU Activation** | Gated linear unit with SiLU activation: `SiLU(w1(x) ⊗ w2(x))` |
-| **FlashAttention** | PyTorch 2.0 optimized scaled dot-product attention with causal masking |
+| --- | --- |
+| **RMSNorm** | Root Mean Square Layer Normalization for stable, gradient-bounded training. |
+| **Q/K/V/O Projections** | Multi-head attention layers mapped with learned linear transformations. |
+| **Rotary Embeddings** | Sinusoidal RoPE for position-aware attention computation. |
+| **SwiGLU Activation** | Gated linear unit utilizing SiLU activation: $\text{SiLU}(W_1(x)) \times W_2(x)$. |
+| **FlashAttention** | PyTorch 2.0 optimized scaled dot-product attention with causal masking. |
 
 #### Rotary Positional Embeddings
 
-KVHALO uses rotary positional embeddings to inject sequence position information:
+To inject sequence position data, KVHALO maps rotary positional coordinates onto query and key states:
 
-```
-q_rot = Rθ · q,  k_rot = Rθ · k
-```
+$$q_{\text{rot}} = R_{\Theta} \times q, \quad k_{\text{rot}} = R_{\Theta} \times k$$
 
-Where Rθ applies rotation matrices parameterized by:
-```
-freqs = 1.0 / (base^(2i/d_head)) for i in [0, d_head/2)
-```
+Where $R_{\Theta}$ applies rotation matrices parameterized by frequencies:
+
+$$\text{freqs}_i = \frac{1.0}{\text{base}^{\frac{2i}{d_{\text{head}}}}} \quad \text{for } i \in \left[0, \frac{d_{\text{head}}}{2}\right)$$
+
+---
 
 ### KV Upscaler Backbone
 
-The `KvHALO_Upscaler` orchestrates the reconstruction pipeline:
+The `KvHALO_Upscaler` manages the end-to-end reconstruction pipeline:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                     KvHALO_Upscaler                              │
+│                      KvHALO_Upscaler                             │
 │                                                                  │
-│  lossy_kv [B, S, 2·teacher_dim]                                │
+│  lossy_kv [B, S, 2 * teacher_dim]                                │
 │       │                                                          │
 │       ▼                                                          │
-│  ┌──────────────┐                                               │
-│  │ Input        │  Linear(2·teacher_dim → d_model)             │
-│  │ Compression  │  → z_L [B, S, d_model]                       │
-│  └──────────────┘                                               │
+│  ┌──────────────┐   Linear(2 * teacher_dim → d_model)            │
+│  │ Input        │   → z_L [B, S, d_model]                        │
+│  │ Compression  │                                                │
+│  └──────────────┘                                                │
 │       │                                                          │
 │       ▼                                                          │
-│  ┌─────────────────────────┐                                    │
-│  │ HRM Thinking Loops (t=2) │  Iterative refinement            │
-│  │  z_H, z_L ← HRMInner    │  Dual-stream information routing │
-│  └─────────────────────────┘                                    │
+│  ┌─────────────────────────┐                                     │
+│  │ HRM Thinking Loops (t=2) │   Iterative refinement             │
+│  │  z_H, z_L ← HRMInner     │   Dual-stream information routing  │
+│  └─────────────────────────┘                                     │
 │       │                                                          │
 │       ▼                                                          │
-│  ┌──────────────┐                                               │
-│  │ Regression   │  Linear(d_model → 2·teacher_dim)             │
-│  │ Head         │  → predicted_states [B, S, 2·teacher_dim]    │
-│  └──────────────┘                                               │
+│  ┌──────────────┐   Linear(d_model → 2 * teacher_dim)            │
+│  │ Regression   │   → predicted_states [B, S, 2 * teacher_dim]   │
+│  │ Head         │                                                │
+│  └──────────────┘                                                │
 │       │                                                          │
 │       ▼                                                          │
-│  predicted_states [B, S, 2·teacher_dim] ← Chunk → K_pred, V_pred│
+│  predicted_states [B, S, 2 * teacher_dim] ← Chunk → K_pred, V_pred  │
 └──────────────────────────────────────────────────────────────────┘
+
 ```
 
-**Forward Pass Flow:**
+#### Forward Pass Execution Flow:
 
-1. **Input Compression**: The lossy (quantized) KV states are projected from the teacher dimension (`teacher_dim * 2`) down to the latent space (`d_model`)
-2. **HRM Thinking**: Exactly `t_steps=2` iterations of the dual-stream HRMInner process the latent representations, progressively refining the reconstruction
-3. **Regression**: The final high-state is projected back to the full teacher dimension, producing predicted high-fidelity KV states
+1. **Input Compression:** The lossy, quantized KV states are projected from the full teacher space (`teacher_dim * 2`) down to a lower-dimensional latent space (`d_model`).
+2. **HRM Thinking:** Exactly `t_steps=2` iterations of the dual-stream `HRMInner` architecture process the latent representations, progressively refining details.
+3. **Regression:** The final high-state is projected back to the full teacher dimension, splitting out the predicted high-fidelity key and value states.
+
+---
 
 ### Quantization & Reconstruction Pipeline
 
-KVHALO supports configurable bit-width quantization:
+KVHALO provides uniform, configurable bit-width simulation mapping to $\text{Steps} = 2^{\text{bits}} - 1$:
 
-```
-Steps = 2^bits - 1
+* **1-bit:** 2 levels $[0, 1]$ $\rightarrow$ 50% foot-print compression
+* **2-bit:** 4 levels $[0, \frac{1}{3}, \frac{2}{3}, 1]$ $\rightarrow$ 8x spatial VRAM reduction
+* **4-bit:** 15 levels $[0, \frac{1}{14}, \dots, 1]$ $\rightarrow$ 4x spatial VRAM reduction
 
-For 1-bit:  2 levels  [0, 1]       → 50% compression
-For 2-bit:  4 levels [0, 1/3, 2/3, 1]  → 8x compression
-For 4-bit:  15 levels [0, 1/14, ..., 1] → 4x compression
-```
-
-The quantization process:
-1. Normalize tensor to [0, 1] range
-2. Round to nearest discrete level
-3. Rescale back to original magnitude
+The simulation normalizes tensors to a $[0, 1]$ range, rounds to the nearest discrete level, and scales values back to their original scalar magnitude.
 
 ---
 
@@ -161,22 +165,25 @@ The quantization process:
 
 ```
 KVHALO-Inference/
-├── ExecutionClient.py              # Production-ready client API
-├── README.md                       # This file
-├── LICENSE                         # Apache 2.0 License
-├── requirements.txt                # Python dependencies
+├── main.py                           # Main production-ready client API 
+├── README.md                         # Project documentation
+├── LICENSE                           # Apache 2.0 License
+├── requirements.txt                  # System dependencies
 ├── examples/
-│   └── compare_base_mistral.py    # Interactive Gradio comparison demo
+│   └── compare_base_mistral.py       # Interactive Gradio comparison UI
 └── sub_libraries/
-    ├── HRM_Main.py                 # HRM architecture + KvHALO_Upscaler
-    └── HRM_Simulated_Quantization.py  # Quantization utility functions
+    ├── HRM_Main.py                   # HRM architecture & KvHALO_Upscaler definitions
+    └── HRM_Simulated_Quantization.py # Numerical quantization utilities
+
 ```
 
+### File Manifest
+
 | File | Purpose |
-|------|---------|
-| `main.py` | `MistralKvHALO` class — production API for integrating KVHALO into any generation pipeline |
-| `sub_libraries/HRM_Simulated_Quantization.py` | `simulate_low_bit_quantization()` utility for training-time quantization simulation |
-| `examples/compare_base_mistral.py` | Full Gradio application comparing baseline vs. KVHALO-enhanced generation with live waveform visualization |
+| --- | --- |
+| `main.py` | Exposes `MistralKvHALO`—the production API for seamlessly intercepting and patching models. |
+| `sub_libraries/HRM_Simulated_Quantization.py` | Contains `simulate_low_bit_quantization()` for runtime/training emulation. |
+| `examples/compare_base_mistral.py` | Runs a Gradio UI to compare baseline vs. KVHALO generations alongside structural charts. |
 
 ---
 
@@ -184,117 +191,108 @@ KVHALO-Inference/
 
 ### Prerequisites
 
-- **Python 3.8+**
-- **GPU** with CUDA drivers (recommended) **or** macOS with Apple Silicon (MPS support)
-- **Hugging Face account** for model access (if downloading Mistral-7B)
+* **Python 3.8+**
+* **CUDA-compatible GPU** (highly recommended) or Apple Silicon Mac (with MPS enabled)
+* **Hugging Face Account** (authenticated via CLI to download base weights)
 
 ### Setup
 
 ```bash
-# Install Python dependencies
-git clone https://github.com/RA86-dev/KVHALO_Inference && cd KVHALO_Inference
+# Clone repository and enter directory
+git clone https://github.com/RA86-dev/KVHALO_Inference.git
+cd KVHALO_Inference
+
+# Install requirements
 pip install -r requirements.txt
-huggingface-cli download richyvd/kvhalo # Downloads v2.1 and v2.3 - choose one
-``` 
+
+# Download pre-trained upscaler weights
+huggingface-cli download richyvd/kvhalo
+
+```
+
 ---
 
 ## Usage
-This is recommended to be downloaded in the directory that you are working in, so that you can just import files using `from` and `import`.
+
+For seamless implementation, clone this repository directly inside your workspace root directory to reference local imports easily.
+
 ### Quick Start
 
 ```python
-from KVHALO_Inference.main import MistralKvHALO
+from main import MistralKvHALO
 
-# Initialize the KVHALO engine
+# Initialize the KVHALO patching engine
 client = MistralKvHALO(target_layer=15)
 
-# Load trained weights (if available)
+# Load trained upscaler weights
 client.load_upscaler_weights("best_KVHALO.pt")
 
-# Generate with KVHALO reconstruction enabled
+# Stream generation with 2-bit target layers
 prompt = "Explain quantum entanglement in simple terms."
 for chunk in client.generate(prompt, max_new_tokens=64, bits=2, temperature=0.7):
     print(chunk, end="", flush=True)
-```
 
+```
 
 ### Programmatic API
 
-The `MistralKvHALO` class provides a clean interface:
+For granular pipeline control, you can patch and unpatch target modules manually:
 
 ```python
-from KVHALO_Inference.main import MistralKvHALO
+from main import MistralKvHALO
 
 client = MistralKvHALO(
-    model_id="mistralai/Mistral-7B-Instruct-v0.3",  # Base model
-    target_layer=15                                   # Layer to intercept
+    model_id="mistralai/Mistral-7B-Instruct-v0.3",
+    target_layer=15
 )
-
-# Load checkpoint
 client.load_upscaler_weights("best_KVHALO.pt")
 
-# Streaming generation
-for response_chunk in client.generate(
-    prompt="Your prompt here",
-    max_new_tokens=128,
-    bits=2,            # Quantization level (1-4)
-    temperature=0.7    # Sampling temperature
-):
-    print(response_chunk, end="")
+# Active runtime hook patching
+client.patch(bits=2)
 
-# Manually control patching
-client.patch(bits=2)      # Enable KVHALO
-# ... run generation ...
-client.unpatch()           # Disable KVHALO (restores 16-bit)
+# ... run your custom generation loops or evaluation logic here ...
+
+# Unpatching restores model back to original FP16 states
+client.unpatch()
+
 ```
 
 ---
 
 ## Configuration
 
-KVHALO uses a configuration dictionary matching the training setup:
+The model upscaler tracks configuration inputs matching standard distillation hyperparameters:
 
 ```python
 CONFIG = {
-    "d_model": 768,      # Latent dimension (candidate space)
-    "n_heads": 12,       # Multi-head attention heads
-    "d_ff": 3072,        # Feed-forward dimension (4× d_model)
-    "dropout": 0.0,      # Dropout rate (0.0 for inference)
-    "teacher_dim": 1024  # Per-head dimension × num_heads for Mistral GQA
+    "d_model": 768,      # Latent representation dimension
+    "n_heads": 12,       # Attention heads within the HRM block
+    "d_ff": 3072,        # Hidden layer size of SwiGLU block (4 * d_model)
+    "dropout": 0.0,      # Zeroed out for inference execution
+    "teacher_dim": 1024  # Base model target width (Mistral: 8 GQA heads * 128 head_dim)
 }
+
 ```
-
-### Configuration Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `d_model` | 768 | Latent representation dimension after input compression |
-| `n_heads` | 12 | Number of attention heads in HRMBlock |
-| `d_ff` | 3072 | Hidden dimension of the SwiGLU feed-forward network |
-| `dropout` | 0.0 | Dropout rate (set to 0.0 for inference) |
-| `teacher_dim` | 1024 | Dimension of the teacher model's KV per layer (Mistral: 8 GQA heads × 128 head_dim) |
 
 ---
 
 ## Training
 
-To train a KVHALO upscaler for your model:
+To train a custom `KvHALO_Upscaler` checkpoint:
 
-1. **Collect KV cache pairs** from your base model (16-bit "teacher" states and corresponding 2-bit "student" states)
-2. **Compute continuous latent distillation loss**:
-   - **MSE Loss**: Aligns geometric magnitudes between predicted and target states
-   - **Cosine Similarity Loss**: Aligns directional semantics between predicted and target states
-3. **Save checkpoint**:
-   ```python
-   torch.save({
-       "model_state_dict": KVHALO.state_dict(),
-       "config": CONFIG
-   }, "best_KVHALO.pt")
-   ```
+1. **Collect Cache Pairs:** Extract corresponding pairs of original 16-bit states ("teacher") and target low-bit quantized states ("student") during forward passes.
+2. **Optimize via Multi-Objective Loss:** Balance spatial geometry magnitude alongside directional semantics using a joint Mean Squared Error (MSE) and Cosine Similarity objective function:
 
-The loss function optimizes:
-```
-L = MSE(predicted_states, target_states) + (1 - cosine_similarity(flat_pred, flat_target))
+$$L = \text{MSE}(\text{predicted}, \text{target}) + \big(1 - \text{CosineSimilarity}(\text{pred}_{\text{flat}}, \text{target}_{\text{flat}})\big)$$
+
+3. **Export Checkpoint:**
+
+```python
+torch.save({
+    "model_state_dict": upscaler.state_dict(),
+    "config": CONFIG
+}, "best_KVHALO.pt")
+
 ```
 
 ---
@@ -303,67 +301,59 @@ L = MSE(predicted_states, target_states) + (1 - cosine_similarity(flat_pred, fla
 
 ### Memory Savings
 
-For a targeted layer, KVHALO achieves approximately:
+On targets running long sequence context boundaries, VRAM constraints scale roughly as:
 
-```
-VRAM Savings ≈ (16-bit footprint) - (bits-bit footprint)
+$$\text{VRAM Savings} \approx \text{Footprint}_{\text{FP16}} - \text{Footprint}_{\text{Quantized}}$$
 
-Example for Layer 15 with 100 token sequence:
-- FP16 cache: ~128 KB
-- 2-bit cache: ~8 KB
-- Savings: ~120 KB per layer
-```
+* **Baseline FP16 layer cache (100 tokens):** ~128 KB
+* **2-bit Quantized layer cache (100 tokens):** ~8 KB
+* **Net Layer Savings:** ~120 KB per target layer
 
 ### Reconstruction Quality
 
-- **Empirical cosine similarity**: ~91.85% alignment with original 16-bit states (at 2-bit quantization)
-- **Linguistic divergence recovered**: KVHALO-generated text shows significantly higher similarity to ground-truth 16-bit generation compared to naive quantized baseline
+* **Cosine Similarity Alignment:** Reaches **~91.85%** directional vector alignment relative to reference baseline states when running under 2-bit quantization metrics.
+* **Linguistic Perplexity:** Substantially lowers the downstream linguistic degradation commonly found in naive, non-optimized quantizations.
 
-### Generation Speed
+### Execution Speeds
 
-- **Warm-up overhead**: First inference includes kernel compilation (~2-5 seconds on GPU, ~5-10 seconds on MPS)
-- **Per-token overhead**: Minimal (~0.1-0.5ms per token for the 92M parameter HRM upscaler)
-- **Baseline throughput**: Comparable to unpatched Mistral-7B generation speed
+* **Warm-up Latency:** The initial forward token triggers a minor compilation pass (~2-5s on CUDA, ~5-10s on Apple Silicon MPS).
+* **Per-Token Overhead:** Negligible addition of **~0.1–0.5ms per token** using the highly lightweight 92M parameter HRM architecture.
 
 ---
 
 ## Technical Details
 
-### HRM Architecture Summary
+### HRM Summary Specs
 
-| Aspect | Value |
-|--------|-------|
-| Total Parameters | ~92M |
-| Thinking Steps (t_steps) | 2 |
-| State Types | Dual (High-State z_H + Low-State z_L) |
-| Attention Mechanism | Multi-head with FlashAttention 2 |
-| Position Encoding | Rotary (RoPE), base=10000 |
-| Activation | SwiGLU (SiLU × linear) |
-| Normalization | RMSNorm (ε=1e-5) |
+| Metric | Value |
+| --- | --- |
+| **Total Parameters** | ~92M |
+| **Thinking Iterations ($t_{\text{steps}}$)** | 2 Loops |
+| **State Layout** | Dual-Stream ($z_H$ Global + $z_L$ Residual) |
+| **Attention Engine** | Multi-Head Attention via FlashAttention-2 |
+| **Position Mapping** | Rotary Embeddings (RoPE), Base = 10,000 |
 
-### Supported Models
+### Tested Deployments
 
-Currently tested with:
-- **Mistral-7B-Instruct-v0.3** (GQA with 8 KV heads)
+* **Mistral-7B-Instruct-v0.3** (Grouped-Query Attention with 8 KV heads)
+* *Architecture is design-agnostic—scale `teacher_dim` params upward to fit alternative GQA architectures.*
 
-The framework is designed to be model-agnostic — adjust `teacher_dim` for different architectures.
+### Hardware Specs
 
-### Hardware Requirements
-
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| GPU | 8 GB VRAM | 16+ GB VRAM |
-| RAM | 16 GB | 32+ GB |
-| Apple Silicon | MPS-compatible | M1 Pro or later |
-| CUDA | Compute 7.0+ | Compute 8.0+ |
+| Requirements | Minimum | Recommended |
+| --- | --- | --- |
+| **GPU VRAM** | 8 GB | 16+ GB |
+| **System RAM** | 16 GB | 32+ GB |
+| **Apple Silicon** | M1 Engine or later | M1 Pro / Max or later |
+| **CUDA Compute** | Capability 7.0+ | Capability 8.0+ |
 
 ---
 
 ## License
 
-This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for details.
+This framework is open-source software distributed under the terms of the **Apache License 2.0**.
 
-```
+```text
 Copyright 2026 Richard Wang & The KVHALO Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -377,18 +367,5 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
 ```
-
----
-
-## Citation
-
-If you use KVHALO in your research, please cite:
-
-```bibtex
-@software{kvhalo2026,
-  author = {Wang, Richard},
-  title = {KVHALO-Inference: KV Cache Hierarchical Adaptive Learning Optimizer},
-  year = {2026},
-  url = {https://github.com/RA86-dev/KVHALO-Inference}
-}
