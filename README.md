@@ -218,7 +218,7 @@ For seamless implementation, clone this repository directly inside your workspac
 ### Quick Start
 
 ```python
-from main import MistralKvHALO
+from KVHALO_Inference.main import MistralKvHALO
 
 # Initialize the KVHALO patching engine
 client = MistralKvHALO(target_layer=15)
@@ -238,7 +238,7 @@ for chunk in client.generate(prompt, max_new_tokens=64, bits=2, temperature=0.7)
 For granular pipeline control, you can patch and unpatch target modules manually:
 
 ```python
-from main import MistralKvHALO
+from KVHALO_Inference.main import MistralKvHALO
 
 client = MistralKvHALO(
     model_id="mistralai/Mistral-7B-Instruct-v0.3",
