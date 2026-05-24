@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, Dict
-
-# --- RETAINING YOUR EXACT ROPE, RMSNORM, & SWIGLU ARCHITECTURE ---
-
 class RotaryPositionalEmbeddings(nn.Module):
     def __init__(self, d_head, block_size=8192, base=10000):
         super().__init__()
@@ -72,7 +69,6 @@ class HRMBlock(nn.Module):
         
         q, k = self.rope.apply(q, k, start_pos=start_pos)
         
-        # PyTorch 2.0 Optimization: FlashAttention + Automatic Causal Masking
         is_causal = (seq_len > 1) 
         attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
         
@@ -91,16 +87,13 @@ class HRMInner(nn.Module):
         self.loop_norm = RMSNorm(config["d_model"]) 
         
     def forward(self, z_H, z_L, start_pos=0):
-        # The Dual-Stream Information Routing (High/Low State Interplay)
+
         z_L_input = self.loop_norm(z_L + z_H) 
         z_L_current = self.L_module(z_L_input, start_pos=start_pos)
         z_H_input = z_H + z_L_current
         z_H_new = self.H_module(z_H_input, start_pos=start_pos)
         return z_H_new, z_L_current
 
-# ---------------------------------------------------------
-# THE KV UPSCALER BACKBONE (SUPER-RESOLUTION REGRESSOR)
-# ---------------------------------------------------------``
 class KvHALO_Upscaler(nn.Module):
     def __init__(self, config, compiled=False):
         super().__init__()
@@ -108,19 +101,9 @@ class KvHALO_Upscaler(nn.Module):
         self.compiled = compiled
         self.teacher_dim = config.get("teacher_dim", 1024)
         self.t_steps = config.get("t_steps", 2)
-        
-        # =======================================================
-        # STREAM 1: GEOMETRIC KEY SPECIALIST (Tracks RoPE Phases)
-        # =======================================================
-        # Ingests ONLY the 1024-dim Keys -> Bottleneck -> 1024-dim Continuous Keys
         self.key_compression = nn.Linear(self.teacher_dim, config["d_model"], bias=False)
         self.key_inner_model = HRMInner(config)
-        self.key_regression_head = nn.Linear(config["d_model"], self.teacher_dim, bias=False)
-        
-        # =======================================================
-        # STREAM 2: SEMANTIC VALUE SPECIALIST (Tracks Embeddings)
-        # =======================================================
-        # Ingests ONLY the 1024-dim Values -> Bottleneck -> 1024-dim Continuous Values
+        self.key_regression_head = nn.Linear(config["d_model"], self.teacher_dim, bias=
         self.value_compression = nn.Linear(self.teacher_dim, config["d_model"], bias=False)
         self.value_inner_model = HRMInner(config)
         self.value_regression_head = nn.Linear(config["d_model"], self.teacher_dim, bias=False)
@@ -132,47 +115,30 @@ class KvHALO_Upscaler(nn.Module):
         """
         batch_size, seq_len, _ = lossy_kv_states.shape
 
-        # Chunk the incoming concatenated tensor back into independent Key and Value streams
         lossy_keys, lossy_values = lossy_kv_states.chunk(2, dim=-1)
-
-        # ---------------------------------------------------------
-        # PATH A: EXECUTE KEY SPECIALIST
-        # ---------------------------------------------------------
         z_L_k = self.key_compression(lossy_keys)
         z_H_k = torch.zeros_like(z_L_k)
         
         for step in range(self.t_steps):
             z_H_k, z_L_k = self.key_inner_model(z_H_k, z_L_k, start_pos=start_pos)
             
-        # RESIDUAL CLAMP: Multiply by 0.1 to prevent magnitude explosion (Saves the MSE)
         pred_keys = lossy_keys + (self.key_regression_head(z_H_k) * 0.1)
 
-        # ---------------------------------------------------------
-        # PATH B: EXECUTE VALUE SPECIALIST
-        # ---------------------------------------------------------
         z_L_v = self.value_compression(lossy_values)
         z_H_v = torch.zeros_like(z_L_v)
         
         for step in range(self.t_steps):
             z_H_v, z_L_v = self.value_inner_model(z_H_v, z_L_v, start_pos=start_pos)
-            
-        # ULTRA-TIGHT CLAMP: Values are static semantics, they need almost no scaling (0.02)
         pred_values = lossy_values + (self.value_regression_head(z_H_v) * 0.02)
 
-        # ---------------------------------------------------------
-        # RECOMBINE & LOSS ENGINE
-        # ---------------------------------------------------------
-        # Shape blows back up to [batch_size, seq_len, teacher_dim * 2]
         predicted_f32_states = torch.cat([pred_keys, pred_values], dim=-1)
         output = {"predicted_states": predicted_f32_states}
 
         if target_states is not None:
             target_states_f32 = target_states.to(dtype=torch.float32)
             
-            # MSE (Geometric magnitude alignment)
             mse_loss = F.mse_loss(predicted_f32_states, target_states_f32)
             
-            # Cosine Distance Loss (Directional semantic alignment)
             flat_pred = predicted_f32_states.view(-1, self.teacher_dim * 2)
             flat_target = target_states_f32.view(-1, self.teacher_dim * 2)
             
