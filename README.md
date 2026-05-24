@@ -197,10 +197,8 @@ pip install -r requirements.txt
 ```
 
 ### Required Dependencies
-- Note that all models are available at the Huggingface Repository [Here](https://huggingface.co/richyvd/kvhalo)
-
-
-
+- Note that all models are available at the Huggingface Repository [Here](https://huggingface.co/richyvd/kvhalo).
+- **Please Download the v2.3 or any model on the repository for upscaling purposes**.
 ---
 
 ## Usage
