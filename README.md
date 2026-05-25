@@ -4,7 +4,7 @@
 **KVHALO** (KV Cache Hierarchical Adaptive Learning Optimizer) is a novel inference-time framework that dynamically reconstructs degraded KV caches in autoregressive transformer models. By intercepting key-value cache tensors during generation, KVHALO applies super-resolution regression through a **Hierarchical Reasoning Model (HRM)** architecture to recover high-fidelity representations from severely quantized, low-bit footprints.
 
 > ⚠️ **NOTE**: This implementation is currently optimized for **Mistral** architectures. Adapting it to other models requires minor modifications to the layer interception hooks.
-
+Training code is located at [RA86-dev/KVHALO_Training](https://github.com/RA86-dev/KVHALO_Training)
 ---
 
 
